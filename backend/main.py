@@ -1,0 +1,570 @@
+import os
+from dotenv import load_dotenv
+
+# Load all environment variables at the absolute top before nested imports run
+load_dotenv()
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from jose import JWTError, jwt
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Annotated
+import secrets
+import datetime as dt
+
+import models, schemas, auth, database, email_service
+from auth import get_db, get_current_user, db_dependency
+import os
+import shutil
+import time
+from contextlib import asynccontextmanager
+import asyncio
+from services.news_service import ingest_articles
+
+# Create tables if they don't exist
+models.Base.metadata.create_all(bind=database.engine)
+
+async def background_news_fetch():
+    while True:
+        try:
+            db = database.SessionLocal()
+            try:
+                ingest_articles(db)
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"Background news fetch failed: {e}")
+        await asyncio.sleep(1800) # 30 minutes
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(background_news_fetch())
+    yield
+    task.cancel()
+
+app = FastAPI(title="Portfolio Engine Backend", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static directory for avatars
+os.makedirs("static/avatars", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Dependencies moved to dependencies.py
+
+# Routes and Middleware continue...
+@app.post("/register", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
+def register_user(user: schemas.UserCreate, background_tasks: BackgroundTasks, db: db_dependency):
+    import re
+    if len(user.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+    if not re.search(r"[A-Za-z]", user.password) or not re.search(r"\d", user.password):
+        raise HTTPException(status_code=400, detail="Password must contain a combination of letters and numbers.")
+
+    db_user = db.query(models.User).filter(models.User.email == user.email).first()
+    
+    hashed_password = auth.get_password_hash(user.password)
+    otp = f"{secrets.randbelow(1000000):06d}"
+    
+    if db_user:
+        if db_user.is_verified:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        else:
+            # Re-use the existing unverified account, update password and new OTP
+            db_user.hashed_password = hashed_password
+            db_user.full_name = user.full_name
+            db_user.email_verification_code = otp
+            db_user.email_verification_expires = dt.datetime.utcnow() + dt.timedelta(minutes=15)
+            db.commit()
+            db.refresh(db_user)
+            background_tasks.add_task(email_service.send_registration_otp, db_user.email, otp)
+            return db_user
+
+    new_user = models.User(
+        email=user.email,
+        hashed_password=hashed_password,
+        full_name=user.full_name,
+        is_verified=False,
+        email_verification_code=otp,
+        email_verification_expires=dt.datetime.utcnow() + dt.timedelta(minutes=15)
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    background_tasks.add_task(email_service.send_registration_otp, new_user.email, otp)
+    
+    return new_user
+
+class VerifyRegistrationRequest(schemas.BaseModel):
+    email: str
+    code: str
+
+@app.post("/register/verify")
+def verify_registration(payload: VerifyRegistrationRequest, db: db_dependency):
+    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    if user.is_verified:
+        raise HTTPException(status_code=400, detail="User is already verified")
+        
+    if user.email_verification_code != payload.code.strip():
+        raise HTTPException(status_code=400, detail="Invalid verification code")
+    if user.email_verification_expires and user.email_verification_expires < dt.datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Verification code expired. Please register again.")
+        
+    user.is_verified = True
+    user.email_verification_code = None
+    user.email_verification_expires = None
+    db.commit()
+    
+    access_token = auth.create_access_token(data={"sub": user.email})
+    return {"access_token": access_token, "token_type": "bearer", "mfa_required": False}
+
+@app.post("/login")
+def login_user(user: schemas.UserLogin, background_tasks: BackgroundTasks, db: db_dependency):
+    db_user = db.query(models.User).filter(models.User.email == user.email).first()
+    if not db_user or not auth.verify_password(user.password, db_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    if not db_user.is_verified:
+        raise HTTPException(status_code=403, detail="Please verify your email address before logging in.")
+
+    # If MFA is enabled, generate real OTP, save, and email it
+    if db_user.mfa_enabled:
+        otp = f"{secrets.randbelow(1000000):06d}"
+        db_user.mfa_code = otp
+        db_user.mfa_expires = dt.datetime.utcnow() + dt.timedelta(minutes=10)
+        db.commit()
+        
+        background_tasks.add_task(email_service.send_mfa_otp, db_user.email, otp)
+        
+        temp_token = auth.create_access_token(
+            data={"sub": db_user.email, "mfa_pending": True},
+            expires_minutes=5
+        )
+        return {"mfa_required": True, "temp_token": temp_token}
+
+    # Successful standard login
+    pref = db.query(models.UserPreferences).filter(models.UserPreferences.user_id == db_user.id).first()
+    if pref and pref.notify_email and pref.notify_milestones: # notify_milestones was repurposed to Login Alerts
+        now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        background_tasks.add_task(email_service.send_login_alert, db_user.email, now_str)
+
+    access_token = auth.create_access_token(data={"sub": db_user.email})
+    return {"access_token": access_token, "token_type": "bearer", "mfa_required": False}
+
+@app.get("/users/me", response_model=schemas.UserResponse)
+def read_users_me(current_user: Annotated[models.User, Depends(get_current_user)]):
+    return current_user
+
+@app.put("/users/me", response_model=schemas.UserResponse)
+def update_user_me(
+    user_update: schemas.UserUpdate, 
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency
+):
+    if user_update.full_name is not None:
+        current_user.full_name = user_update.full_name
+        
+    if user_update.password is not None and user_update.password.strip() != "":
+        import re
+        if len(user_update.password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+        if not re.search(r"[A-Za-z]", user_update.password) or not re.search(r"\d", user_update.password):
+            raise HTTPException(status_code=400, detail="Password must contain a combination of letters and numbers.")
+        current_user.hashed_password = auth.get_password_hash(user_update.password)
+        
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+@app.put("/users/me/mfa", response_model=schemas.UserResponse)
+def toggle_mfa(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency
+):
+    """Toggle MFA on or off for the current user."""
+    current_user.mfa_enabled = not current_user.mfa_enabled
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+@app.post("/mfa/verify")
+def verify_mfa(payload: schemas.MfaVerify, background_tasks: BackgroundTasks, db: db_dependency):
+    """
+    Verify the MFA OTP code submitted after login.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired session. Please log in again."
+    )
+    try:
+        token_data = jwt.decode(payload.temp_token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        email = token_data.get("sub")
+        is_mfa_pending = token_data.get("mfa_pending", False)
+        if not email or not is_mfa_pending:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user or not user.mfa_code:
+        raise HTTPException(status_code=400, detail="Invalid MFA request")
+        
+    if user.mfa_code != payload.code.strip():
+        raise HTTPException(status_code=400, detail="Invalid verification code")
+    if user.mfa_expires and user.mfa_expires < dt.datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Verification code expired. Please log in again.")
+        
+    # Clear the MFA code upon success
+    user.mfa_code = None
+    user.mfa_expires = None
+    db.commit()
+
+    # Trigger Login Alert if enabled
+    pref = db.query(models.UserPreferences).filter(models.UserPreferences.user_id == user.id).first()
+    if pref and pref.notify_email and pref.notify_milestones:
+        now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        background_tasks.add_task(email_service.send_login_alert, user.email, now_str)
+
+    access_token = auth.create_access_token(data={"sub": email})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/auth/forgot-password")
+def forgot_password(payload: schemas.ForgotPasswordRequest, background_tasks: BackgroundTasks, db: db_dependency):
+    """
+    Generate a 6-digit OTP password reset token for the given email and send it.
+    """
+    db_user = db.query(models.User).filter(models.User.email == payload.email).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Email not registered. Please register first.")
+        
+    otp = f"{secrets.randbelow(1000000):06d}"
+    db_user.password_reset_token = otp
+    db_user.password_reset_expires = dt.datetime.utcnow() + dt.timedelta(minutes=30)
+    db.commit()
+    
+    background_tasks.add_task(email_service.send_password_reset_otp, db_user.email, otp)
+        
+    return {"message": "A reset code has been sent to your email."}
+
+@app.post("/auth/verify-reset-token")
+def verify_reset_token(payload: schemas.VerifyResetTokenRequest, db: db_dependency):
+    """Verify that the provided OTP token is valid and not expired."""
+    import datetime as dt
+    db_user = db.query(models.User).filter(models.User.password_reset_token == payload.token).first()
+    if not db_user:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code.")
+    if db_user.password_reset_expires and db_user.password_reset_expires < dt.datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
+        
+    return {"message": "Verification code is valid."}
+
+@app.post("/auth/reset-password")
+def reset_password(payload: schemas.ResetPasswordRequest, db: db_dependency):
+    """Validate the reset token and update the user's password."""
+    import datetime as dt
+    import re
+    
+    if not payload.new_password or len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+    if not re.search(r"[A-Za-z]", payload.new_password) or not re.search(r"\d", payload.new_password):
+        raise HTTPException(status_code=400, detail="Password must contain a combination of letters and numbers.")
+
+    db_user = db.query(models.User).filter(models.User.password_reset_token == payload.token).first()
+    if not db_user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
+    if db_user.password_reset_expires and db_user.password_reset_expires < dt.datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Reset token has expired. Please request a new one.")
+
+    # Reject if the new password is the same as the current one
+    import bcrypt as _bcrypt
+    if _bcrypt.checkpw(payload.new_password.encode('utf-8'), db_user.hashed_password.encode('utf-8')):
+        raise HTTPException(status_code=400, detail="New password must be different from your current password.")
+
+    db_user.hashed_password = auth.get_password_hash(payload.new_password)
+    db_user.password_reset_token = None
+    db_user.password_reset_expires = None
+    db.commit()
+    return {"message": "Password updated successfully. You can now log in."}
+
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
+class GoogleAuthRequest(schemas.BaseModel):
+    credential: str
+
+@app.post("/auth/google")
+def auth_google(payload: GoogleAuthRequest, background_tasks: BackgroundTasks, db: db_dependency):
+    try:
+        client_id = os.environ.get("GOOGLE_CLIENT_ID")
+        if not client_id or client_id == "your_google_client_id_here":
+            raise HTTPException(status_code=500, detail="Google Client ID is not configured on the server")
+
+        # Verify the token
+        idinfo = id_token.verify_oauth2_token(payload.credential, google_requests.Request(), client_id)
+        
+        email = idinfo.get("email")
+        name = idinfo.get("name", "Google User")
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="No email provided by Google")
+            
+        db_user = db.query(models.User).filter(models.User.email == email).first()
+        
+        if not db_user:
+            # Auto-register new user
+            hashed_password = auth.get_password_hash(secrets.token_urlsafe(32)) # random strong password
+            db_user = models.User(
+                email=email,
+                hashed_password=hashed_password,
+                full_name=name,
+                is_verified=True, # Google verified it
+            )
+            db.add(db_user)
+            db.commit()
+            db.refresh(db_user)
+        elif not db_user.is_verified:
+            # Verify the user since Google verified them
+            db_user.is_verified = True
+            db_user.email_verification_code = None
+            db_user.email_verification_expires = None
+            db.commit()
+            db.refresh(db_user)
+
+        # Check MFA
+        if db_user.mfa_enabled:
+            otp = f"{secrets.randbelow(1000000):06d}"
+            db_user.mfa_code = otp
+            db_user.mfa_expires = dt.datetime.utcnow() + dt.timedelta(minutes=10)
+            db.commit()
+            
+            background_tasks.add_task(email_service.send_mfa_otp, db_user.email, otp)
+            
+            temp_token = auth.create_access_token(
+                data={"sub": db_user.email, "mfa_pending": True},
+                expires_minutes=5
+            )
+            return {"mfa_required": True, "temp_token": temp_token}
+
+        # Successful login
+        pref = db.query(models.UserPreferences).filter(models.UserPreferences.user_id == db_user.id).first()
+        if pref and pref.notify_email and pref.notify_milestones:
+            now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            background_tasks.add_task(email_service.send_login_alert, db_user.email, now_str)
+
+        access_token = auth.create_access_token(data={"sub": db_user.email})
+        return {"access_token": access_token, "token_type": "bearer", "mfa_required": False}
+
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+@app.post("/users/me/avatar", response_model=schemas.UserResponse)
+async def upload_avatar(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency,
+    file: UploadFile = File(...)
+):
+    # Validate file type
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File provided is not an image.")
+
+    # Create a unique filename
+    file_extension = file.filename.split(".")[-1]
+    filename = f"avatar_{current_user.id}.{file_extension}"
+    file_path = os.path.join("static", "avatars", filename)
+
+    # Save the file
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Update user model - adding timestamp to bust browser cache
+    avatar_url = f"http://localhost:8000/static/avatars/{filename}?t={int(time.time())}"
+    current_user.avatar_url = avatar_url
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    return current_user
+
+@app.delete("/users/me/avatar", response_model=schemas.UserResponse)
+def delete_avatar(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency
+):
+    if current_user.avatar_url:
+        # Extract filename to delete the static file if we wanted to
+        # filename = current_user.avatar_url.split("/")[-1]
+        # file_path = os.path.join("static", "avatars", filename)
+        # if os.path.exists(file_path): os.remove(file_path)
+        
+        current_user.avatar_url = None
+        db.commit()
+        db.refresh(current_user)
+        
+    return current_user
+
+@app.get("/users/me/preferences", response_model=schemas.UserPreferencesResponse)
+def get_preferences(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency
+):
+    pref = db.query(models.UserPreferences).filter(models.UserPreferences.user_id == current_user.id).first()
+    if not pref:
+        # Create default preferences lazily if they don't exist
+        pref = models.UserPreferences(user_id=current_user.id)
+        db.add(pref)
+        db.commit()
+        db.refresh(pref)
+    return pref
+
+@app.put("/users/me/preferences", response_model=schemas.UserPreferencesResponse)
+def update_preferences(
+    payload: schemas.UserPreferencesUpdate,
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency
+):
+    pref = db.query(models.UserPreferences).filter(models.UserPreferences.user_id == current_user.id).first()
+    if not pref:
+        pref = models.UserPreferences(user_id=current_user.id)
+        db.add(pref)
+    
+    # Update fields
+    for k, v in payload.dict(exclude_unset=True).items():
+        setattr(pref, k, v)
+        
+    db.commit()
+    db.refresh(pref)
+    return pref
+
+@app.get("/users/me/export")
+def export_user_data(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency
+):
+    assets = db.query(models.Asset).filter(models.Asset.user_id == current_user.id).all()
+    txs = db.query(models.Transaction).filter(models.Transaction.user_id == current_user.id).order_by(models.Transaction.timestamp.desc()).all()
+    pref = db.query(models.UserPreferences).filter(models.UserPreferences.user_id == current_user.id).first()
+    
+    data = {
+        "user": {
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+            "mfa_enabled": current_user.mfa_enabled
+        },
+        "preferences": {
+            "currency": pref.currency if pref else "USD",
+            "sync_interval": pref.sync_interval if pref else 15,
+            "show_chart": pref.show_chart if pref else True,
+            "default_view": pref.default_view if pref else "dashboard",
+            "notify_email": pref.notify_email if pref else False,
+            "notify_price_alerts": pref.notify_price_alerts if pref else True,
+            "notify_sync_complete": pref.notify_sync_complete if pref else False,
+            "notify_daily_summary": pref.notify_daily_summary if pref else False,
+            "notify_milestones": pref.notify_milestones if pref else True
+        },
+        "assets": [
+            {
+                "symbol": a.symbol,
+                "asset_class": a.asset_class,
+                "quantity": a.quantity,
+                "average_buy_price": a.average_buy_price,
+                "current_price": a.current_price,
+                "pnl": a.pnl,
+                "pnl_percent": a.pnl_percent,
+                "broker_name": a.broker_name
+            } for a in assets
+        ],
+        "transactions": [
+            {
+                "symbol": t.symbol,
+                "transaction_type": t.transaction_type,
+                "quantity": t.quantity,
+                "price": t.price,
+                "broker_name": t.broker_name,
+                "asset_class": t.asset_class,
+                "timestamp": t.timestamp.isoformat() if t.timestamp else None
+            } for t in txs
+        ]
+    }
+    
+    import datetime as dt
+    date_str = dt.datetime.utcnow().strftime("%Y%m%d")
+    return JSONResponse(
+        content=data,
+        headers={"Content-Disposition": f"attachment; filename=spa_portfolio_export_{date_str}.json"}
+    )
+
+@app.get("/users/me/export/pdf")
+def export_user_data_pdf(
+    current_user: Annotated[models.User, Depends(get_current_user)],
+    db: db_dependency
+):
+    from pdf_export import generate_portfolio_pdf
+    from fastapi.responses import StreamingResponse
+    import datetime as dt
+    
+    assets = db.query(models.Asset).filter(models.Asset.user_id == current_user.id).all()
+    txs = db.query(models.Transaction).filter(models.Transaction.user_id == current_user.id).order_by(models.Transaction.timestamp.desc()).all()
+    creds = db.query(models.BrokerCredential).filter(models.BrokerCredential.user_id == current_user.id).all()
+    
+    total_val = 0.0
+    total_cost = 0.0
+    total_capital = 0.0
+    for c in creds:
+        if c.total_capital: total_capital += float(c.total_capital)
+    for a in assets:
+        qty = float(a.quantity) if a.quantity else 0.0
+        buy_p = float(a.average_buy_price) if a.average_buy_price else 0.0
+        cur_p = float(a.current_price) if a.current_price else 0.0
+        total_cost += qty * buy_p
+        total_val += qty * cur_p
+    
+    day_abs = total_val - total_cost
+    day_perc = (day_abs / total_cost * 100) if total_cost > 0 else 0.0
+    
+    summary = {
+        "total_capital": total_capital,
+        "total_value": total_val,
+        "day_return_perc": day_perc,
+        "day_return_abs": day_abs,
+        "active_positions": len(assets)
+    }
+    
+    pdf_buffer = generate_portfolio_pdf(
+        user_name=current_user.full_name or "User",
+        user_email=current_user.email,
+        summary_data=summary,
+        assets=assets,
+        transactions=txs
+    )
+    
+    date_str = dt.datetime.utcnow().strftime("%Y%m%d")
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=spa_portfolio_export_{date_str}.pdf"}
+    )
+
+from routers import brokers, portfolio, market, news
+
+app.include_router(brokers.router)
+app.include_router(portfolio.router)
+app.include_router(market.router)
+app.include_router(news.router)
+
+# Forcing a reload to pick up python-multipart installation

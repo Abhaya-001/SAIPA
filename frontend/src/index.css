@@ -1,0 +1,233 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --saipa-void: #030712;
+    --saipa-deep: #0a0f1a;
+    --saipa-surface: #0f172a;
+    --saipa-panel: rgba(15, 23, 42, 0.72);
+    --saipa-border: rgba(34, 211, 238, 0.12);
+    --saipa-border-hover: rgba(34, 211, 238, 0.28);
+    --saipa-core: #22d3ee;
+    --saipa-accent: #06b6d4;
+    --saipa-text: #f1f5f9;
+    --saipa-muted: #94a3b8;
+    --saipa-glow: rgba(34, 211, 238, 0.2);
+    --transition-fast: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 500ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased selection:bg-primary-500/30 selection:text-primary-950;
+    @apply dark:bg-saipa-void dark:text-slate-100;
+    transition: background-color var(--transition-base), color var(--transition-base);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* ── System module (primary card surface) ── */
+  .glass-panel,
+  .system-module {
+    @apply relative rounded-2xl overflow-hidden;
+    @apply bg-white/80 dark:bg-saipa-panel backdrop-blur-xl;
+    @apply border border-gray-200/80 dark:border-saipa-border;
+    @apply shadow-saipa;
+    transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-base);
+  }
+
+  .system-module::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.04) 0%, transparent 50%);
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  .system-module-hover:hover {
+    @apply -translate-y-0.5 shadow-saipa-hover;
+    border-color: var(--saipa-border-hover);
+  }
+
+  /* ── Metric readout cards ── */
+  .metric-card {
+    @apply system-module system-module-hover p-6;
+  }
+
+  .metric-card .metric-label {
+    @apply text-xs font-medium uppercase tracking-widest text-gray-500 dark:text-slate-400 font-display;
+  }
+
+  .metric-card .metric-value {
+    @apply text-3xl font-bold mt-2 font-mono tabular-nums tracking-tight;
+  }
+
+  /* ── Section headers ── */
+  .saipa-section-title {
+    @apply text-xl font-semibold text-gray-900 dark:text-white font-display tracking-tight;
+  }
+
+  .saipa-page-title {
+    @apply text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white font-display tracking-tight;
+  }
+
+  /* ── Form controls ── */
+  .input-field {
+    @apply bg-white border border-gray-300 text-gray-900 text-sm rounded-xl;
+    @apply focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500;
+    @apply block w-full p-3;
+    @apply dark:bg-saipa-deep/80 dark:border-saipa-border dark:placeholder-slate-500 dark:text-slate-100;
+    @apply dark:focus:ring-primary-400/30 dark:focus:border-primary-400;
+    transition: all var(--transition-fast);
+    outline: none;
+  }
+
+  .input-field:-webkit-autofill,
+  .input-field:-webkit-autofill:hover,
+  .input-field:-webkit-autofill:focus,
+  .input-field:-webkit-autofill:active {
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: #111827;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+
+  .dark .input-field:-webkit-autofill,
+  .dark .input-field:-webkit-autofill:hover,
+  .dark .input-field:-webkit-autofill:focus,
+  .dark .input-field:-webkit-autofill:active {
+    -webkit-text-fill-color: #f1f5f9;
+  }
+
+  /* ── Buttons ── */
+  .btn-primary {
+    @apply w-full text-white font-medium rounded-xl text-sm px-5 py-3 text-center;
+    @apply bg-gradient-to-r from-primary-600 to-primary-500;
+    @apply hover:from-primary-500 hover:to-primary-400;
+    @apply focus:ring-2 focus:outline-none focus:ring-primary-400/40;
+    @apply shadow-md shadow-primary-600/20;
+    @apply hover:shadow-lg hover:shadow-primary-500/25;
+    @apply translate-y-0 hover:-translate-y-0.5 active:translate-y-0;
+    transition: all var(--transition-fast);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-xl;
+    @apply bg-gray-100 dark:bg-saipa-deep/80 text-gray-700 dark:text-slate-300;
+    @apply border border-gray-200 dark:border-saipa-border;
+    @apply hover:bg-gray-200 dark:hover:bg-saipa-surface hover:border-primary-500/30;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-400/30;
+    transition: all var(--transition-fast);
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 p-2 rounded-xl;
+    @apply text-gray-500 dark:text-slate-400;
+    @apply hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-saipa-surface;
+    transition: all var(--transition-fast);
+  }
+
+  /* ── Segmented control ── */
+  .saipa-segment {
+    @apply inline-flex items-center gap-1 p-1 rounded-xl;
+    @apply bg-gray-100 dark:bg-saipa-deep/80 border border-gray-200 dark:border-saipa-border;
+  }
+
+  .saipa-segment-btn {
+    @apply px-3 py-1.5 text-xs font-medium rounded-lg transition-all;
+    @apply text-gray-500 dark:text-slate-400;
+    @apply hover:text-gray-900 dark:hover:text-white;
+  }
+
+  .saipa-segment-btn-active {
+    @apply bg-white dark:bg-saipa-surface text-primary-600 dark:text-primary-400;
+    @apply shadow-sm border border-gray-200/50 dark:border-saipa-border;
+  }
+
+  /* ── Chart container ── */
+  .chart-module {
+    @apply system-module p-6 w-full;
+  }
+
+  /* ── Data table ── */
+  .saipa-table {
+    @apply w-full text-sm text-left;
+  }
+
+  .saipa-table thead {
+    @apply text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-saipa-border;
+  }
+
+  .saipa-table th {
+    @apply px-4 py-3 font-medium font-display;
+  }
+
+  .saipa-table td {
+    @apply px-4 py-3 border-b border-gray-100 dark:border-saipa-border/50;
+  }
+
+  .saipa-table tbody tr {
+    transition: background-color var(--transition-fast);
+  }
+
+  .saipa-table tbody tr:hover {
+    @apply bg-gray-50 dark:bg-saipa-surface/50;
+  }
+
+  /* ── Nav link active state ── */
+  .saipa-nav-link {
+    @apply flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium;
+    @apply text-gray-500 dark:text-slate-400;
+    @apply hover:text-gray-900 dark:hover:text-white;
+    @apply hover:bg-gray-100 dark:hover:bg-saipa-surface/60;
+    transition: all var(--transition-fast);
+  }
+
+  .saipa-nav-link-active {
+    @apply bg-primary-50 dark:bg-primary-950/40 text-primary-600 dark:text-primary-400;
+    @apply border border-primary-200/50 dark:border-primary-500/20;
+  }
+
+  /* ── Auth page shell ── */
+  .auth-shell {
+    @apply min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden;
+    @apply bg-gray-50 dark:bg-saipa-void;
+  }
+
+  /* ── Loading spinner ── */
+  .saipa-spinner {
+    @apply border-4 border-primary-500/30 border-t-primary-500 rounded-full animate-spin;
+  }
+}
+
+@layer utilities {
+  .text-gradient-saipa {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary-400 via-cyan-300 to-primary-500;
+  }
+
+  .border-gradient-saipa {
+    border-image: linear-gradient(135deg, rgba(34, 211, 238, 0.3), rgba(6, 182, 212, 0.1)) 1;
+  }
+}

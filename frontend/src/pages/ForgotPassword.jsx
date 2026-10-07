@@ -1,0 +1,253 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { KeyRound, Lock, MailCheck, ArrowLeft } from 'lucide-react';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+import GlassPanel from '../components/ui/GlassPanel';
+import AuthShell from '../components/layout/AuthShell';
+
+export default function ForgotPassword() {
+    const [step, setStep] = useState('forgot'); // 'forgot' | 'verify-otp' | 'new-password'
+    const [email, setEmail] = useState('');
+    const [error, setError] = useState('');
+    const [successMsg, setSuccessMsg] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [countdown, setCountdown] = useState(0);
+
+    useEffect(() => {
+        let timer;
+        if (countdown > 0) {
+            timer = setInterval(() => setCountdown(prev => prev - 1), 1000);
+        }
+        return () => clearInterval(timer);
+    }, [countdown]);
+
+    // Reset token fields
+    const [resetToken, setResetToken] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+
+    const navigate = useNavigate();
+
+    const handleForgotSubmit = async (e) => {
+        e.preventDefault(); setError(''); setSubmitting(true);
+        try {
+            await axios.post('http://localhost:8000/auth/forgot-password', { email });
+            setStep('verify-otp');
+            setCountdown(60);
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Something went wrong');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleResend = async () => {
+        if (countdown > 0) return;
+        setError('');
+        try {
+            await axios.post('http://localhost:8000/auth/forgot-password', { email });
+            setCountdown(60);
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Failed to resend code');
+        }
+    };
+
+    const handleVerifyOtp = async (e) => {
+        e.preventDefault(); setError(''); setSubmitting(true);
+        try {
+            const res = await axios.post('http://localhost:8000/auth/verify-reset-token', { token: resetToken });
+            setSuccessMsg(res.data.message);
+            setTimeout(() => {
+                setStep('new-password');
+                setSuccessMsg('');
+            }, 1500);
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Invalid verification code');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleResetSubmit = async (e) => {
+        e.preventDefault(); setError(''); setSubmitting(true);
+        if (newPassword !== confirmPassword) {
+            setError('Passwords do not match'); setSubmitting(false); return;
+        }
+        try {
+            const res = await axios.post('http://localhost:8000/auth/reset-password', {
+                token: resetToken,
+                new_password: newPassword
+            });
+            setSuccessMsg(res.data.message);
+            setTimeout(() => navigate('/login'), 2000);
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Reset failed');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const errorBox = error && (
+        <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm p-3 rounded-lg text-center">
+            {error}
+        </div>
+    );
+
+    const successBox = successMsg && (
+        <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 text-sm p-3 rounded-lg text-center">
+            {successMsg}
+        </div>
+    );
+
+    const backBtn = (action, label = 'Back to login') => (
+        <button
+            type="button"
+            onClick={action}
+            className="mt-5 w-full flex items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+        >
+            <ArrowLeft className="w-4 h-4" />{label}
+        </button>
+    );
+
+    return (
+        <AuthShell>
+                {step === 'forgot' && (
+                    <>
+                        <div className="flex justify-center text-primary-600 dark:text-primary-500 mb-4">
+                            <KeyRound className="w-12 h-12" />
+                        </div>
+                        <h2 className="text-center text-3xl font-extrabold text-gray-900 dark:text-white mb-2">Forgot Password</h2>
+                        <p className="text-center text-sm text-gray-600 dark:text-gray-400 mb-8">
+                            Enter your email and we'll send you a 6-digit verification code
+                        </p>
+                        <GlassPanel>
+                            {successMsg ? (
+                                <div className="space-y-4">
+                                    {successBox}
+                                </div>
+                            ) : (
+                                <form className="space-y-5" onSubmit={handleForgotSubmit}>
+                                    {errorBox}
+                                    <Input
+                                        label="Email address"
+                                        id="forgot-email"
+                                        type="email"
+                                        required
+                                        placeholder="you@example.com"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                    />
+                                    <Button type="submit" isLoading={submitting} icon={MailCheck}>
+                                        Send Reset Link
+                                    </Button>
+                                </form>
+                            )}
+                            {backBtn(() => navigate('/login'))}
+                        </GlassPanel>
+                    </>
+                )}
+                {step === 'verify-otp' && (
+                    <>
+                        <div className="flex justify-center text-primary-600 dark:text-primary-500 mb-4">
+                            <MailCheck className="w-12 h-12" />
+                        </div>
+                        <h2 className="text-center text-3xl font-extrabold text-gray-900 dark:text-white mb-2">Verify Code</h2>
+                        <p className="text-center text-sm text-gray-600 dark:text-gray-400 mb-8">
+                            A reset code has been sent to your email.
+                        </p>
+                        <GlassPanel>
+                            {successMsg ? (
+                                <div className="space-y-4">
+                                    {successBox}
+                                </div>
+                            ) : (
+                                <form className="space-y-5" onSubmit={handleVerifyOtp}>
+                                    {errorBox}
+                                    <Input
+                                        label="6-Digit Verification Code"
+                                        id="reset-token"
+                                        type="text"
+                                        required
+                                        placeholder="123456"
+                                        value={resetToken}
+                                        onChange={(e) => setResetToken(e.target.value)}
+                                        maxLength={6}
+                                        className="text-center text-xl tracking-widest"
+                                    />
+                                    <div className="flex flex-col gap-4">
+                                        <Button type="submit" isLoading={submitting} icon={MailCheck}>
+                                            Verify Code
+                                        </Button>
+                                        <div className="text-sm font-medium text-gray-500 dark:text-gray-400 text-center">
+                                            {countdown > 0 ? (
+                                                <span>Resend code in {countdown}s</span>
+                                            ) : (
+                                                <>
+                                                    Didn't receive the code?{' '}
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={handleResend} 
+                                                        className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
+                                                    >
+                                                        Resend
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                </form>
+                            )}
+                            {!successMsg && backBtn(() => { setStep('forgot'); setError(''); }, 'Back')}
+                        </GlassPanel>
+                    </>
+                )}
+                {step === 'new-password' && (
+                    <>
+                        <div className="flex justify-center text-primary-600 dark:text-primary-500 mb-4">
+                            <Lock className="w-12 h-12" />
+                        </div>
+                        <h2 className="text-center text-3xl font-extrabold text-gray-900 dark:text-white mb-2">Change Password</h2>
+                        <p className="text-center text-sm text-gray-600 dark:text-gray-400 mb-8">
+                            Choose a new secure password
+                        </p>
+                        <GlassPanel>
+                            {successMsg ? (
+                                <div className="space-y-4">
+                                    {successBox}
+                                    <p className="text-center text-sm text-gray-500 dark:text-gray-400">Redirecting to login…</p>
+                                </div>
+                            ) : (
+                                <form className="space-y-5" onSubmit={handleResetSubmit}>
+                                    {errorBox}
+                                    <Input
+                                        label="New Password"
+                                        id="new-password"
+                                        type="password"
+                                        required
+                                        placeholder="Min 6 characters"
+                                        value={newPassword}
+                                        onChange={(e) => setNewPassword(e.target.value)}
+                                    />
+                                    <Input
+                                        label="Confirm New Password"
+                                        id="confirm-password"
+                                        type="password"
+                                        required
+                                        placeholder="Repeat new password"
+                                        value={confirmPassword}
+                                        onChange={(e) => setConfirmPassword(e.target.value)}
+                                    />
+                                    <Button type="submit" isLoading={submitting} icon={Lock}>
+                                        Reset Password
+                                    </Button>
+                                </form>
+                            )}
+                            {!successMsg && backBtn(() => { setStep('forgot'); setError(''); setSuccessMsg(''); }, 'Cancel')}
+                        </GlassPanel>
+                    </>
+                )}
+        </AuthShell>
+    );
+}
