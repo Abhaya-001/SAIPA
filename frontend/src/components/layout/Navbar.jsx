@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import AvatarDropdown from '../ui/AvatarDropdown';
 import SaipaLogo from '../ui/SaipaLogo';
-import { Activity, BarChart2, Newspaper, Menu, X, Radio } from 'lucide-react';
+import { Activity, BarChart2, Newspaper, Menu, X, Radio, Bot } from 'lucide-react';
 
 const NAV_LINKS = [
     { to: '/dashboard', label: 'Dashboard', icon: Activity },
     { to: '/markets',   label: 'Markets',   icon: BarChart2 },
     { to: '/news',      label: 'News',      icon: Newspaper },
+    { to: '/agent',     label: 'Agent',     icon: Bot },
 ];
 
 export default function Navbar() {

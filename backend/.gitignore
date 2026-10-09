@@ -3,7 +3,9 @@ venv/
 env/
 ENV/
 .venv/
+.venv_codex/
 .env
+.runlogs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

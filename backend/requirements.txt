@@ -16,3 +16,6 @@ celery
 yfinance
 feedparser
 passlib[bcrypt]
+alpaca-py
+binance-connector
+tzdata

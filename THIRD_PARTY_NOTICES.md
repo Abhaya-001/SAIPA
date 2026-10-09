@@ -1,3 +1,7 @@
+# Third-Party Notices
+
+The Smart Portfolio Analysis & Insights Engine includes material distributed under the MIT License. The original copyright and permission notice are reproduced here.
+
 MIT License
 
 Copyright (c) 2026 Muhammad Anas Farooq

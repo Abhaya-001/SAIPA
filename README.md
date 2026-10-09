@@ -1,6 +1,8 @@
-# Smart Portfolio Analysis & Insights Engine
+# Portfolio Engine — Abhaya-001
 
-A full-stack multi-broker portfolio intelligence platform built with **React (Vite)** + **FastAPI (Python)**. Connect your Alpaca and Binance accounts to view real-time positions, capital, P&L, and institutional-grade portfolio analytics in one unified interface.
+A personal, full-stack multi-broker portfolio platform built with **React (Vite)** and **FastAPI (Python)**. Connect Alpaca and Binance accounts to view positions, capital, P&L, and portfolio analytics in one interface.
+
+**Maintainer:** [Abhaya-001](https://github.com/Abhaya-001). This is a customized continuation of the Smart Portfolio Analysis & Insights Engine, originally credited to Muhammad Anas Farooq.
 
 ---
 
@@ -13,6 +15,7 @@ A full-stack multi-broker portfolio intelligence platform built with **React (Vi
 - 📡 **Live Markets Page** — real-time price quotes for Stocks, Crypto, and Forex with 10s auto-refresh, top gainers/losers, and symbol search.
 - 📰 **Financial News Aggregation** — aggregates and deduplicates articles from multiple free RSS sources across sectors, with ticker tagging and 30-min auto-refresh.
 - 🤖 **AI-Powered Insights** — AI recommendations engine synthesizes attribution, sentiment, and financial signals into actionable portfolio guidance.
+- 🧠 **Paper Trading Agent** — an opt-in Q-learning research agent trains on Alpaca daily SPY bars, logs decisions, and updates from later simulated rewards. Scheduled execution is off by default and hard-locked to Alpaca paper trading.
 - 📈 **Portfolio Attribution** — Brinson-Fachler methodology decomposes returns into allocation and selection effects.
 - 🗓️ **Calendar P&L View** — heatmap-style daily profit/loss calendar for trade journaling and pattern recognition.
 - 💡 **Sentiment Analysis** — privacy-preserving local LLM (Mistral 7B via Ollama) processes financial news without external API calls.
@@ -115,12 +118,6 @@ graph TD
 
 ---
 
-## Security
-
-Financial credential safety is a core design principle. See our [Security Policy](SECURITY.md) for details on encryption, MFA, and session management.
-
----
-
 ## Tech Stack
 
 | Layer | Technology |
@@ -151,8 +148,8 @@ Financial credential safety is a core design principle. See our [Security Policy
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/anasfarock/portfolio-engine.git
-cd portfolio-engine
+git clone https://github.com/Abhaya-001/majorproject.git
+cd majorproject
 ```
 
 ### 2. Backend Setup
@@ -208,6 +205,20 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ```
 
 > ⚠️ `ENCRYPTION_KEY` is **required** — the backend will refuse to start without it.
+
+### Paper Trading Agent
+
+After linking an Alpaca paper account in **API Integrations**, open **Agent** in the navigation and train the SPY policy. The agent compares a chronological holdout simulation with a fixed 5% exposure baseline and records each decision for later review. At the next daily bar, it applies a small Q-learning update from the strategy's simulated reward.
+
+Daily scheduling and paper order submission both start disabled. The agent only supports Alpaca paper mode and SPY, with a 5% maximum exposure, a $100 order cap, and one decision per daily bar. Use a dedicated paper account: the strategy manages that account's entire SPY position. Binance remains available for portfolio data and is not used by this agent. Training and holdout results are simulations, not forecasts or actual account P&L.
+
+Install the updated backend dependencies after pulling changes:
+
+```powershell
+cd backend
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
 #### Start the Backend
 
@@ -501,8 +512,6 @@ All protected routes require a valid JWT Bearer token in the `Authorization` hea
 
 ---
 
-## License
+## Credits
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
- 
-Developed as a Final Year Project at SZABIST University, Islamabad.
+This customized project is maintained by Abhaya-001 and builds on the Smart Portfolio Analysis & Insights Engine, originally credited to Muhammad Anas Farooq. The original project README identifies it as a Final Year Project at SZABIST University, Islamabad.

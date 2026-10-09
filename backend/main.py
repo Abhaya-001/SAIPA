@@ -23,6 +23,7 @@ import time
 from contextlib import asynccontextmanager
 import asyncio
 from services.news_service import ingest_articles
+from services.trading_agent import run_active_agents
 
 # Create tables if they don't exist
 models.Base.metadata.create_all(bind=database.engine)
@@ -39,11 +40,21 @@ async def background_news_fetch():
             print(f"Background news fetch failed: {e}")
         await asyncio.sleep(1800) # 30 minutes
 
+async def background_agent_loop():
+    while True:
+        try:
+            await asyncio.to_thread(run_active_agents, database.SessionLocal)
+        except Exception as e:
+            print(f"Paper agent scheduler failed: {type(e).__name__}")
+        await asyncio.sleep(60)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(background_news_fetch())
+    agent_task = asyncio.create_task(background_agent_loop())
     yield
     task.cancel()
+    agent_task.cancel()
 
 app = FastAPI(title="Portfolio Engine Backend", lifespan=lifespan)
 
@@ -560,11 +571,15 @@ def export_user_data_pdf(
         headers={"Content-Disposition": f"attachment; filename=spa_portfolio_export_{date_str}.pdf"}
     )
 
-from routers import brokers, portfolio, market, news
+from routers import brokers, portfolio, market, news, orders, alpaca, binance, agent
 
 app.include_router(brokers.router)
 app.include_router(portfolio.router)
 app.include_router(market.router)
 app.include_router(news.router)
+app.include_router(orders.router)
+app.include_router(alpaca.router)
+app.include_router(binance.router)
+app.include_router(agent.router)
 
 # Forcing a reload to pick up python-multipart installation

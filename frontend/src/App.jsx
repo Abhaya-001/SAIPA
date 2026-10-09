@@ -20,6 +20,7 @@ const Settings       = lazy(() => import('./pages/Settings'));
 const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const Markets        = lazy(() => import('./pages/Markets'));
 const News           = lazy(() => import('./pages/News'));
+const Agent          = lazy(() => import('./pages/Agent'));
 
 // ─── Lazy-loaded dashboard sub-components ────────────────────────────────────
 const AssetTable       = lazy(() => import('./components/portfolio/AssetTable'));
@@ -116,7 +117,7 @@ function Dashboard() {
 
       // Auto-negotiate live stream sync with API keys FIRST natively!
       try {
-        const syncRes = await axios.post('http://localhost:8000/portfolio/sync', {}, { headers: { Authorization: `Bearer ${token}` } });
+        const syncRes = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/portfolio/sync`, {}, { headers: { Authorization: `Bearer ${token}` } });
         setSyncIssues((syncRes.data.details || []).filter(item => item.status !== 'success'));
       } catch (syncErr) {
         console.error("Auto-sync background pipeline failed: ", syncErr);
@@ -124,9 +125,9 @@ function Dashboard() {
       }
 
       const [summaryRes, assetsRes, txRes, prefsRes] = await Promise.all([
-        axios.get('http://localhost:8000/portfolio/summary', { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get('http://localhost:8000/portfolio/assets', { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get('http://localhost:8000/portfolio/transactions', { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/portfolio/summary`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/portfolio/assets`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/portfolio/transactions`, { headers: { Authorization: `Bearer ${token}` } }),
         axios.get('http://localhost:8000/users/me/preferences', { headers: { Authorization: `Bearer ${token}` } }).catch(() => ({ data: {} }))
       ]);
 
@@ -458,6 +459,7 @@ function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/markets" element={<Suspense fallback={<PageFallback />}><Markets /></Suspense>} />
             <Route path="/news" element={<Suspense fallback={<PageFallback />}><News /></Suspense>} />
+            <Route path="/agent" element={<Suspense fallback={<PageFallback />}><Agent /></Suspense>} />
             <Route path="/profile" element={<Suspense fallback={<PageFallback />}><Profile /></Suspense>} />
             <Route path="/api-keys" element={<Suspense fallback={<PageFallback />}><ApiKeys /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />

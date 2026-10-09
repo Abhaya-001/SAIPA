@@ -29,7 +29,7 @@ export default function ApiKeys() {
 
     const fetchCredentials = async () => {
         try {
-            const res = await axios.get('http://localhost:8000/brokers/credentials', {
+            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/brokers/credentials`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setCredentials(res.data);

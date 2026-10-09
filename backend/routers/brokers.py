@@ -104,19 +104,53 @@ def sync_broker_credential(
         raise HTTPException(status_code=404, detail="Credential not found")
         
     if cred.broker_name == "Alpaca":
-        result = alpaca_sync.sync_alpaca_account(credential_id, current_user.id, db)
-        if result["status"] == "error":
-            raise HTTPException(status_code=400, detail=result["message"])
-        return {"message": result["message"]}
+        # Simple Alpaca sync: fetch positions and orders, store as assets & transactions
+        from alpaca.trading.client import TradingClient
+        secret = encryption.decrypt(cred.encrypted_secret)
+        client = TradingClient(api_key=cred.api_key, secret_key=secret)
+        # Store positions as assets
+        try:
+            positions = client.get_all_positions()
+            for p in positions:
+                # Upsert Asset
+                asset = db.query(models.Asset).filter(models.Asset.symbol == p.symbol, models.Asset.credential_id == cred.id).first()
+                if not asset:
+                    asset = models.Asset(
+                        user_id=current_user.id,
+                        credential_id=cred.id,
+                        broker_name=cred.broker_name,
+                        symbol=p.symbol,
+                        quantity=float(p.qty),
+                        avg_price=float(p.avg_entry_price)
+                    )
+                    db.add(asset)
+                else:
+                    asset.quantity = float(p.qty)
+                    asset.avg_price = float(p.avg_entry_price)
+            db.commit()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Alpaca positions sync failed: {e}")
+        # Store recent orders as transactions
+        try:
+            orders = client.get_orders(limit=50)
+            for o in orders:
+                tx = models.Transaction(
+                    user_id=current_user.id,
+                    credential_id=cred.id,
+                    broker_name=cred.broker_name,
+                    symbol=o.symbol,
+                    transaction_type=o.side,
+                    quantity=float(o.qty),
+                    price=float(o.filled_avg_price) if o.filled_avg_price else 0.0,
+                    asset_class="stock"
+                )
+                db.add(tx)
+            db.commit()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Alpaca orders sync failed: {e}")
+        return {"message": "Alpaca sync completed"}
     elif cred.broker_name in ["Binance Demo", "Binance Spot"]:
         result = binance_sync.sync_binance_account(credential_id, current_user.id, db)
         if result["status"] == "error":
             raise HTTPException(status_code=400, detail=result["message"])
         return {"message": result["message"]}
-    elif cred.broker_name == "Interactive Brokers":
-        result = ibkr_sync.sync_ibkr_account(credential_id, current_user.id, db)
-        if result["status"] == "error":
-            raise HTTPException(status_code=400, detail=result["message"])
-        return {"message": result["message"]}
-    else:
-        raise HTTPException(status_code=400, detail="Broker sync not implemented for this broker")

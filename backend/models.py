@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -104,6 +104,48 @@ class UserPreferences(Base):
     notify_milestones = Column(Boolean, default=True)
 
     user = relationship("User", back_populates="preferences")
+
+
+class AgentProfile(Base):
+    """Per-user configuration and learned Q table for the paper agent."""
+    __tablename__ = "agent_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    auto_submit_paper = Column(Boolean, nullable=False, default=False)
+    q_table = Column(Text, nullable=False, default="{}")
+    training_metrics = Column(Text, nullable=True)
+    trained_at = Column(DateTime, nullable=True)
+    last_attempt_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class AgentDecision(Base):
+    """Daily agent decision and its later simulated reward review."""
+    __tablename__ = "agent_decisions"
+    __table_args__ = (UniqueConstraint("user_id", "bar_date", name="uq_agent_decision_user_bar"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    bar_date = Column(String, nullable=False)
+    symbol = Column(String, nullable=False, default="SPY")
+    state = Column(String, nullable=False)
+    action = Column(Integer, nullable=False)
+    previous_exposure = Column(Float, nullable=False, default=0.0)
+    target_exposure = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    order_side = Column(String, nullable=False, default="HOLD")
+    order_qty = Column(Float, nullable=False, default=0.0)
+    order_notional = Column(Float, nullable=False, default=0.0)
+    equity_snapshot = Column(Float, nullable=True)
+    market_open = Column(Boolean, nullable=False, default=False)
+    status = Column(String, nullable=False, default="evaluating")
+    reason = Column(String, nullable=True)
+    order_id = Column(String, nullable=True)
+    reward = Column(Float, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class NewsArticle(Base):
     __tablename__ = "news_articles"
